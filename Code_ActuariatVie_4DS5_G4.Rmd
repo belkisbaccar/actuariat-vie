@@ -1,0 +1,155 @@
+```{r}
+install.packages("StMoMo")
+install.packages("demography")
+install.packages("reliaR")
+install.packages("geometry")
+install.packages("lifecontingencies")
+install.packages("gnm")
+```
+
+##1. Télécharger les données pour le pays concerné
+```{r}
+#install.packages("forecast")
+library(lifecontingencies)
+library(forecast)
+library(reliaR)
+library(gnm)
+library(demography)
+library(StMoMo)
+
+```
+
+```{r echo=TRUE}
+france<-read.table(file = file.choose(),header = TRUE ,fill=TRUE ,sep = "", dec = ".")
+head(france)
+```
+
+```{r}
+
+fr <- new("lifetable", x=df_france2018$Age, lx=df_france2018$lx,name="FRANCE")
+fr
+```
+
+
+
+```{r}
+france2018<- france[which(france$Year == 2018),names(france)]
+head(france2018)
+df_france2018<-data.frame(france2018)
+str(df_france2018$Age)
+df_france2018$Age<-as.numeric(as.character(france2018$Age))
+df_france2018$Age[111]<-110
+str(df_france2018$Age)
+```
+
+```{r}
+## Question 2
+
+```
+
+
+
+## Question 3 : Calcul des VAP
+
+```{r warning=FALSE,message=FALSE}
+i=(1/0.97-1)
+frtb <- new("actuarialtable", x=fr@x, lx=fr@lx,interest=i)
+frtb
+VAP_rente <- axn(frtb, x=63, m=0, i=i)
+VAP_rente #15.29117
+VAP_capital <- Axn(frtb, x=63, m=0, i=i)
+VAP_capital #0.5412648
+```
+## Question 4 : 
+
+```{r warning=FALSE}
+lafrance <- hmd.mx(country = "FRACNP",username = "mohamedfadhel.shel@esprit.tn",password = "16210243081",label = "france")
+lafrance
+par(mfrow=c(1,2))
+plot(lafrance,series="male",datatype="rate", main="france, Homme, 1816 - 2018",xlab="Age",ylab="Taux (log)")
+plot(lafrance,series="male",datatype="rate", plot.type="time", main="france, Homme, 1816 - 2018",xlab="Années",ylab="Taux (log)")
+lafrance.smth <- smooth.demogdata(lafrance,method="mspline")
+lafranceLcaM <- lca(lafrance.smth ,series ="male" , max.age = 110, adjust="dt")
+plot(lafranceLcaM)
+
+```
+## Modèle Lee-Carter en choisissant les plages d'âge et de période
+
+On observant les paramètres du modèle sur toute la pèriode : 
+
++ αx : une fonction  décroissante pour les âges faibles inférieurs à 25 ans puis une forte croissante jusqu’à la fin de la vie d'ou la plage entre 25 et 100.
+
++ kt : cette fonction décroît sur toute la période, d'ou la plage commence de 1955 jusqu'à 2018.   
+
+
+```{r warning=FALSE}
+lafrance.momo <- StMoMoData(data = lafrance.smth,series = "male" ,type = "central")
+constLC <- function(ax, bx, kt, b0x, gc, wxt, ages) {
+     c1 <- mean(kt[1, ], na.rm = TRUE)
+     c2 <- sum(bx[, 1], na.rm = TRUE)
+     list(ax = ax + c1 * bx, bx = bx / c2, kt = c2 * (kt - c1))}
+age <- 25:100
+annees <- 1955:2018
+LC <- StMoMo(link = "log", staticAgeFun = TRUE, periodAgeFun = "NP", constFun = constLC)
+lafranceFit<- fit(LC, data = lafrance.momo, ages.fit = age, years.fit = annees )
+plot(lafranceFit)
+```
+## Analyse des paramètres :
+
+- αx :  la valeur moyenne des logs de la mortalité instantanné ( ln µ( x t, ) au cours du temps  ) croit fonction de l'age entre -6 et 0 .
+
+- βx indique la sensibilité de la mortalité instantanée par rapport à l’évolution générale de la mortalité. On constate des pics sur les tranches d’âges entre 60 et 75 ans.
+
+- D’après la figure ci-dessus et comme  kt indique l’évolution générale de la mortalité dans le temps ; On constate une tendance linéaire à la décroissance du paramètre k  entre 1940 et 2010. Cette tendance à la décroissance du paramètre k devient négatif au cours de la période implique d’après la formule de Lee-Carter une diminution des taux instantanés de mortalité. En conséquence, on assiste à une augmentation  de la probabilité  de la  survie sur la période observée.
+
+
+## Le résidus du modèle 
+
+```{r warning=FALSE}
+model_res <- resid(lafranceFit)
+plot(model_res)
+```
+
+
+
+
+## Question 5 : Projection centrale sur 25 ans
+
+```{r warning=FALSE}
+LcFore=forecast(lafranceLcaM, h = 25 ,method=mean)
+lafranceForcast <- forecast(lafranceFit , h = 25, method=mean)
+plot(lafranceForcast, only.kt=TRUE)
+lafranceForcast
+lafrance
+```
+## Question 6 : Les log taux de mortalités projetés pour la cohortes à partir de 2018
+
+```{r warning=FALSE}
+lafrance1841 <- extract.years(LcFore, years=2018:2041)
+plot(lafrance1841)
+```
+
+## Question 8 : Recalcule des VAP
+
+```{r warning=FALSE}
+chosen_cohort = 1955
+rates <- cbind(lafrance$rate$male[25:90,],lafranceForcast$rates[1:66,])
+taux_historique <- extractCohort(fitted(lafranceFit, type = "rates"), cohort = chosen_cohort)
+taux_estime <- extractCohort(lafranceForcast$rates, cohort = chosen_cohort)
+taux <- c(taux_historique,taux_estime)
+qx_1955 <- mx2qx(taux)
+lifetable_1955<-probs2lifetable(probs=qx_1955,type = "qx",name = paste("LC","1955","lt",sep="_"))
+i=(1/0.97-1)
+france1955LC <- new("actuarialtable", x=lifetable_1955@x, lx=lifetable_1955@lx,interest=i)
+VAP_rente_LC <- axn(france1955LC, x=50, m=0)
+VAP_rente_LC #9.878343
+VAP_capital_lC <- Axn(france1955LC, x=58, m=0, i=i)
+VAP_capital_lC #0.8386845
+```
+## Question 8 : Les autres paramètres qui influent sur le VAP
+
+La VAP dépend de deux facteurs qui sont l’âge de l’assuré et le taux technique i 
+
+* Concernant l’âge la VAP crois en fonction de l’âge (corrélation positive ) vu que la probabilité de décès augmente en fonction de ce dernier .
+
+* Le taux technique : La valeur actuelle probable VAP augmente lorsque le taux technique diminue.
